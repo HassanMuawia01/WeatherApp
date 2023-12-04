@@ -1,10 +1,20 @@
 package com.example.weatherapp
 
-import android.graphics.Color
+import android.Manifest
+import android.content.pm.PackageManager
 import android.os.Bundle
+import android.util.Log
 import android.widget.SearchView
+import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.app.ActivityCompat
+import androidx.core.content.ContextCompat
 import com.example.weatherapp.databinding.ActivityMainBinding
+import com.google.android.gms.location.FusedLocationProviderClient
+import com.google.android.gms.location.LocationServices
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import retrofit2.Call
 import retrofit2.Callback
 import retrofit2.Response
@@ -14,21 +24,38 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
-
 class MainActivity : AppCompatActivity() {
     private val binding: ActivityMainBinding by lazy {
         ActivityMainBinding.inflate(layoutInflater)
     }
-
+    private lateinit var searchHistoryDao: SearchHistoryDao
+    private lateinit var fusedLocationClient: FusedLocationProviderClient
+    private val LOCATION_PERMISSION_REQUEST_CODE = 1001
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(binding.root)
 
-        // Data ko Fetch karny k liye
-        fetchDataWeather("Attock City")
+        requestLocationPermission()
         setSearchCityListener()
-    }
+        searchHistoryDao = (application as MyApplication).database.searchHistoryDao()
 
+    }
+    private fun requestLocationPermission() {
+        if (ContextCompat.checkSelfPermission(
+                this,
+                Manifest.permission.ACCESS_FINE_LOCATION
+            ) != PackageManager.PERMISSION_GRANTED
+        ) {
+            ActivityCompat.requestPermissions(
+                this,
+                arrayOf(Manifest.permission.ACCESS_FINE_LOCATION),
+                LOCATION_PERMISSION_REQUEST_CODE
+            )
+        } else {
+            // Permission already granted, proceed with location retrieval
+            getLocation()
+        }
+    }
     private fun setSearchCityListener() {
         val searchView = binding.searchView
         searchView.setOnQueryTextListener(object : SearchView.OnQueryTextListener {
@@ -45,33 +72,98 @@ class MainActivity : AppCompatActivity() {
             }
         })
     }
+    private fun getLocation() {
+        fusedLocationClient = LocationServices.getFusedLocationProviderClient(this)
+
+        if (ActivityCompat.checkSelfPermission(
+                this,
+                Manifest.permission.ACCESS_FINE_LOCATION
+            ) == PackageManager.PERMISSION_GRANTED
+        ) {
+            fusedLocationClient.lastLocation
+                .addOnSuccessListener { location ->
+                    if (location != null) {
+                        reverseGeocode(location.latitude, location.longitude)
+                        fetchDataWeatherForLocation(location.latitude, location.longitude)
+                        Toast.makeText(this, "permission granted", Toast.LENGTH_SHORT).show()
+                    } else {
+                        binding.city.text = "Unable to retrieve location."
+                    }
+                }
+                .addOnFailureListener { exception ->
+                    binding.city.text = "Error getting location: ${exception.message}"
+                }
+        }
+    }
+    private suspend fun saveSearchHistory(city: String) {
+        val searchHistory = SearchHistory(city = city)
+        searchHistoryDao.insert(searchHistory)
+        Log.d("Database", "Inserted data: $city")
+    }
+    private fun fetchDataWeatherForLocation(latitude: Double, longitude: Double) {
+        val retrofit = Retrofit.Builder()
+            .addConverterFactory(GsonConverterFactory.create())
+            .baseUrl("https://api.openweathermap.org/data/2.5/")
+            .build().create(ApiInterface::class.java)
+
+        val response =
+            retrofit.getWeatherDataByLocation(latitude, longitude, "e87152cc4ee1d143727b88008658ccc8", "metric")
+
+        response.enqueue(object : Callback<WeatherApp> {
+            override fun onResponse(call: Call<WeatherApp>, response: Response<WeatherApp>) {
+                val responseBody = response.body()
+                if (response.isSuccessful && responseBody != null) {
+                    updateUI(responseBody, "Current Location")
+                } else {
+                    Toast.makeText(
+                        this@MainActivity,
+                        "Failed to fetch weather data",
+                        Toast.LENGTH_SHORT
+                    ).show()
+                }
+            }
+
+            override fun onFailure(call: Call<WeatherApp>, t: Throwable) {
+                Toast.makeText(this@MainActivity, "Error fetching location : ${t.message}", Toast.LENGTH_SHORT).show()
+            }
+        })
+    }
 
     private fun fetchDataWeather(city: String) {
         val retrofit = Retrofit.Builder()
             .addConverterFactory(GsonConverterFactory.create())
             .baseUrl("https://api.openweathermap.org/data/2.5/")
             .build().create(ApiInterface::class.java)
+
         val response = retrofit.getWeatherData(city, "e87152cc4ee1d143727b88008658ccc8", "metric")
 
-        // callback ka matlb k data kaha se laye ga
         response.enqueue(object : Callback<WeatherApp> {
             override fun onResponse(call: Call<WeatherApp>, response: Response<WeatherApp>) {
-                // check karna h k response aa rha h ya nahi
                 val responseBody = response.body()
                 if (response.isSuccessful && responseBody != null) {
                     updateUI(responseBody, city)
+                    //add search
+                    CoroutineScope(Dispatchers.Main).launch {
+                        saveSearchHistory(city)
+                        //displayRecentSearchHistory()
+                    }
+
+                } else {
+                    Toast.makeText(
+                        this@MainActivity,
+                        "Failed to fetch weather data",
+                        Toast.LENGTH_SHORT
+                    ).show()
                 }
             }
 
             override fun onFailure(call: Call<WeatherApp>, t: Throwable) {
-                // Handle failure if needed
-                // TODO: Implement appropriate error handling
+                Toast.makeText(this@MainActivity, "Error: ${t.message}", Toast.LENGTH_SHORT).show()
             }
         })
     }
 
     private fun updateUI(responseBody: WeatherApp, city: String) {
-        // Extract weather details from the response
         val temperature = responseBody.main.temp.toString()
         val humidity = responseBody.main.humidity
         val windspeed = responseBody.wind.speed
@@ -82,9 +174,8 @@ class MainActivity : AppCompatActivity() {
         val maxTemp = responseBody.main.temp_max
         val minTemp = responseBody.main.temp_min
 
-        // Update UI elements with weather details
         binding.temp.text = "$temperature °C"
-        binding.weather.text=condition
+        binding.weather.text = condition
         binding.humidilty.text = "$humidity %"
         binding.windspeed.text = "$windspeed m/s"
         binding.sunrise.text = "${time(sunRise)}"
@@ -102,25 +193,23 @@ class MainActivity : AppCompatActivity() {
 
     private fun changeImageAccordingToWeatherCondition(conditions: String) {
         when (conditions) {
-            "Clear Sky","Sunny","Clear" -> {
+            "Clear Sky", "Sunny", "Clear" -> {
                 binding.root.setBackgroundResource(R.drawable.sunny_background)
                 binding.lottieAnimationView.setAnimation(R.raw.sun)
             }
-            "Partly Clouds","Clouds","Overcast","Mist","Foggy" -> {
+            "Partly Clouds", "Clouds", "Overcast", "Mist", "Foggy" -> {
                 binding.root.setBackgroundResource(R.drawable.colud_background)
                 binding.lottieAnimationView.setAnimation(R.raw.cloud)
             }
-            "Light Rain","Drizzle","Moderate Rain","Showers","Heavy Rain","Rain" -> {
+            "Light Rain", "Drizzle", "Moderate Rain", "Showers", "Heavy Rain", "Rain" -> {
                 binding.root.setBackgroundResource(R.drawable.rain_background)
                 binding.lottieAnimationView.setAnimation(R.raw.rain)
             }
-            "Light Snow","Moderate Snow","Heavy Snow","Blizzard" -> {
+            "Light Snow", "Moderate Snow", "Heavy Snow", "Blizzard" -> {
                 binding.root.setBackgroundResource(R.drawable.snow_background)
                 binding.lottieAnimationView.setAnimation(R.raw.snow)
             }
-
-            // munich naples
-            else ->{
+            else -> {
                 binding.root.setBackgroundResource(R.drawable.sunny_background)
                 binding.lottieAnimationView.setAnimation(R.raw.sun)
             }
@@ -135,11 +224,61 @@ class MainActivity : AppCompatActivity() {
 
     private fun time(timestamp: Long): String {
         val sdf = SimpleDateFormat("HH:mm", Locale.getDefault())
-        return sdf.format(Date(timestamp*1000))
+        return sdf.format(Date(timestamp * 1000))
     }
 
     private fun dayName(timestamp: Long): String {
         val sdf = SimpleDateFormat("EEEE", Locale.getDefault())
         return sdf.format(Date(timestamp))
     }
+
+
+    private fun reverseGeocode(latitude: Double, longitude: Double) {
+        val retrofit = Retrofit.Builder()
+            .baseUrl("https://api.opencagedata.com/")
+            .addConverterFactory(GsonConverterFactory.create())
+            .build().create(ReverseGeocodingService::class.java)
+
+        val call = retrofit.reverseGeocode("$latitude,$longitude", "f2191fa377eb464fa740f0b0576ce0ac")
+
+        call.enqueue(object : Callback<LocationData> {
+            override fun onResponse(call: Call<LocationData>, response: Response<LocationData>) {
+                if (response.isSuccessful) {
+                    val results = response.body()?.results
+                    if (results != null && results.isNotEmpty()) {
+                        val locationName = results[0].formatted
+                        binding.city.text = "${locationName.substring(0,31)}"
+                    } else {
+                        binding.city.text = "Location data not found."
+                    }
+                } else {
+                    binding.city.text = "Error fetching location data."
+                }
+            }
+
+            override fun onFailure(call: Call<LocationData>, t: Throwable) {
+                binding.city.text = "Failed to fetch location data: ${t.message}"
+            }
+        })
+    }
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<out String>,
+        grantResults: IntArray
+    ) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        when (requestCode) {
+            LOCATION_PERMISSION_REQUEST_CODE -> {
+                if (grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+                    // Permission granted, proceed with location retrieval
+                    getLocation()
+                } else {
+                    // Permission denied, handle accordingly
+                    binding.city.text = "Location permission denied."
+                }
+            }
+        }
+    }
+
+
 }
