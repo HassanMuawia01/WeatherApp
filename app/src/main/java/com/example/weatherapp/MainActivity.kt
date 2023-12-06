@@ -1,6 +1,7 @@
 package com.example.weatherapp
 
 import android.Manifest
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Bundle
 import android.util.Log
@@ -14,6 +15,7 @@ import com.google.android.gms.location.FusedLocationProviderClient
 import com.google.android.gms.location.LocationServices
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.launch
 import retrofit2.Call
 import retrofit2.Callback
@@ -28,6 +30,8 @@ class MainActivity : AppCompatActivity() {
     private val binding: ActivityMainBinding by lazy {
         ActivityMainBinding.inflate(layoutInflater)
     }
+
+    private lateinit var searchHistoryAdapter: SearchHistoryAdapter
     private lateinit var searchHistoryDao: SearchHistoryDao
     private lateinit var fusedLocationClient: FusedLocationProviderClient
     private val LOCATION_PERMISSION_REQUEST_CODE = 1001
@@ -38,6 +42,33 @@ class MainActivity : AppCompatActivity() {
         requestLocationPermission()
         setSearchCityListener()
         searchHistoryDao = (application as MyApplication).database.searchHistoryDao()
+
+        // Initialize the adapter
+       // searchHistoryAdapter = SearchHistoryAdapter(searchHistoryList)
+
+            // Trigger to fetch data and navigate to the second activity
+            binding.History.setOnClickListener {
+                GlobalScope.launch(Dispatchers.Main) {
+                    val searchHistoryList = searchHistoryDao.getRecentSearchHistory()
+                      if (searchHistoryList.isNotEmpty()) {
+//                        searchHistoryAdapter.updateList(searchHistoryList)
+                       navigateToSecondActivity(searchHistoryList)
+
+
+                       Toast.makeText(this@MainActivity, "Search history", Toast.LENGTH_SHORT).show()
+//
+                    } else {
+                        Toast.makeText(this@MainActivity, "Search history is empty", Toast.LENGTH_SHORT).show()
+                    }
+                }
+
+            }
+        }
+    private fun navigateToSecondActivity(searchHistoryList: List<SearchHistory>) {
+        val intent = Intent(this, HistoryActivity::class.java)
+        // Pass the data to the second activity using Intent
+        intent.putParcelableArrayListExtra("SEARCH_HISTORY_LIST", ArrayList(searchHistoryList))
+        startActivity(intent)
 
     }
     private fun requestLocationPermission() {
@@ -95,10 +126,10 @@ class MainActivity : AppCompatActivity() {
                 }
         }
     }
-    private suspend fun saveSearchHistory(city: String) {
-        val searchHistory = SearchHistory(city = city)
+    private suspend fun saveSearchHistory(city: String,date: String, time: String, temp: String) {
+        val searchHistory = SearchHistory(city = city,date = date, time = time, temp = temp)
         searchHistoryDao.insert(searchHistory)
-        Log.d("Database", "Inserted data: $city")
+        Log.d("Database", "Inserted data: $city,$date, $time, $temp")
     }
     private fun fetchDataWeatherForLocation(latitude: Double, longitude: Double) {
         val retrofit = Retrofit.Builder()
@@ -144,7 +175,11 @@ class MainActivity : AppCompatActivity() {
                     updateUI(responseBody, city)
                     //add search
                     CoroutineScope(Dispatchers.Main).launch {
-                        saveSearchHistory(city)
+                        saveSearchHistory(
+                            city,
+                            date(),
+                            time(System.currentTimeMillis()),
+                            responseBody.main.temp.toString())
                         //displayRecentSearchHistory()
                     }
 
@@ -224,7 +259,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun time(timestamp: Long): String {
         val sdf = SimpleDateFormat("HH:mm", Locale.getDefault())
-        return sdf.format(Date(timestamp * 1000))
+        return sdf.format(Date(timestamp))
     }
 
     private fun dayName(timestamp: Long): String {

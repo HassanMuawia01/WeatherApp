@@ -9,6 +9,6 @@ interface SearchHistoryDao {
     @Insert
     suspend fun insert(searchHistory: SearchHistory)
 
-    @Query("SELECT * FROM search_history_table ORDER BY id DESC LIMIT 5")
+    @Query("SELECT * FROM search_history_table ORDER BY id DESC")
     suspend fun getRecentSearchHistory(): List<SearchHistory>
 }

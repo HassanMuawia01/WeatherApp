@@ -397,4 +397,17 @@
         app:layout_constraintStart_toStartOf="@+id/frameLayout"
         app:layout_constraintTop_toBottomOf="@+id/frameLayout" />
 
+    <TextView
+        android:id="@+id/History"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="72dp"
+        android:layout_marginEnd="16dp"
+        android:fontFamily="@font/merriweathersans_semibold"
+        android:text="History"
+        android:textColor="@color/black"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toEndOf="@+id/city"
+        app:layout_constraintTop_toBottomOf="@+id/searchView" />
+
 </androidx.constraintlayout.widget.ConstraintLayout>
